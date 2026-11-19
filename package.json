@@ -1,0 +1,12 @@
+{
+  "name": "alal-market",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "무료 포인트(알) 기반 손실 보호 예측시장 엔진",
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "sim": "node sim/simulate.ts"
+  },
+  "engines": { "node": ">=22.18" }
+}

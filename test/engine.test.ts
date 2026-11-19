@@ -174,3 +174,34 @@ test('새 시즌은 랭킹 점수만 초기화하고 알 잔액과 보호 한도
   assert.equal(e.exposureCap(e.user('a')), cap);
   e.checkInvariant();
 });
+
+test('거래 마감 후에는 주문이 막히고 정산은 가능하다', () => {
+  const e = setup();
+  e.placeOrder('b', 'M1', 'no', 40, 10);
+  e.placeOrder('a', 'M1', 'yes', 60, 10);
+  e.placeOrder('c', 'M1', 'yes', 30, 1); // 대기 주문
+  e.closeEvent('E1');
+  assert.equal(e.userOrders('c').length, 0);
+  assert.throws(() => e.placeOrder('c', 'M1', 'yes', 50, 1), /거래 종료/);
+  e.settleEvent('E1', 'M1');
+  e.checkInvariant();
+});
+
+test('보호 원금은 열린 이벤트에 들어간 순지불액이고 정산 후 최소 그만큼 돌려받는다', () => {
+  const e = setup();
+  e.placeOrder('b', 'M1', 'no', 40, 10);
+  e.placeOrder('a', 'M1', 'yes', 60, 10);
+  assert.deepEqual(e.protectedPrincipal('a'), [{ eventId: 'E1', amount: 600 }]);
+  const before = e.user('a').balance + 600;
+  e.settleEvent('E1', null);
+  assert.ok(e.user('a').balance >= before);
+  assert.deepEqual(e.protectedPrincipal('a'), []);
+});
+
+test('호가 요약은 가격대별 잔량을 높은 가격부터 보여준다', () => {
+  const e = setup();
+  e.placeOrder('a', 'M1', 'yes', 30, 2);
+  e.placeOrder('b', 'M1', 'yes', 30, 3);
+  e.placeOrder('c', 'M1', 'yes', 35, 1);
+  assert.deepEqual(e.bookLevels('M1').yesBids, [{ price: 35, qty: 1 }, { price: 30, qty: 5 }]);
+});

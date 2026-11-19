@@ -1,12 +1,15 @@
 {
-  "name": "alal-market",
+  "name": "nostra-nogamble",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "무료 포인트(알) 기반 손실 보호 예측시장 엔진",
+  "description": "무료 포인트(알) 기반 손실 보호 예측시장",
   "scripts": {
-    "test": "node --test test/*.test.ts",
-    "sim": "node sim/simulate.ts"
+    "test": "node --no-warnings --test test/*.test.ts",
+    "start": "node --no-warnings src/server.ts",
+    "dev": "ADMIN_TOKEN=dev node --no-warnings --watch src/server.ts",
+    "sim": "node sim/simulate.ts",
+    "seed": "node --no-warnings scripts/seed.ts"
   },
   "engines": { "node": ">=22.18" }
 }

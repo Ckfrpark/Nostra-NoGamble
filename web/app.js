@@ -50,7 +50,7 @@ function chance(m) {
 function renderAccount() {
   const el = $('#account');
   if (!state.me) {
-    el.innerHTML = `<button class="btn primary sm" id="loginBtn">본인인증으로 시작</button>`;
+    el.innerHTML = `<button class="btn primary sm" id="loginBtn">시작하기</button>`;
     $('#loginBtn').onclick = openLogin;
     return;
   }
@@ -68,40 +68,88 @@ function renderAccount() {
   };
 }
 
-function openLogin() {
+let configP = null;
+const getConfig = () => (configP ??= api('GET', '/api/config').catch(() => ({ devLogin: false, olgong: null })));
+
+function loggedIn(r) {
+  state.me = r.me;
+  const d = $('#login');
+  if (d.open) d.close();
+  toast(r.status === 'registered' ? '가입 완료! 1,000알을 받았습니다' : `${r.me.nickname}님, 반가워요`);
+  renderAccount();
+  route();
+}
+
+/** 닉네임 받기 (올공나라에 닉네임이 없을 때, 또는 개발용 인증 첫 가입) */
+function askNickname(submit) {
   const d = $('#login');
   d.innerHTML = `
-    <form method="dialog" id="loginForm">
-      <h2>본인인증</h2>
-      <p>한 사람당 한 계정만 만들 수 있습니다. 가입하면 1,000알을 무료로 드립니다.<br><small>개발용 화면입니다. 실제 서비스는 휴대폰 본인인증(PASS)으로 대체됩니다.</small></p>
-      <div class="field"><label for="phone">휴대폰 번호</label><input class="in" id="phone" inputmode="numeric" placeholder="010-0000-0000" required></div>
-      <div class="field" id="nickField" hidden><label for="nick">닉네임 (2~16자)</label><input class="in" id="nick" maxlength="16"></div>
-      <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary" id="loginGo">인증</button></div>
+    <form method="dialog">
+      <h2>닉네임 정하기</h2>
+      <p>랭킹에 보일 이름입니다. 2~16자로 정해주세요.</p>
+      <div class="field"><label for="nick">닉네임</label><input class="in" id="nick" maxlength="16" required></div>
+      <div class="actions"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn primary" id="nickGo">가입하고 1,000알 받기</button></div>
     </form>`;
-  d.showModal();
-  $('#loginGo').onclick = async (e) => {
+  if (!d.open) d.showModal();
+  $('#nick').focus();
+  $('#nickGo').onclick = async (e) => {
     e.preventDefault();
-    const phone = $('#phone').value;
-    const nickField = $('#nickField');
-    const body = { phone };
-    if (!nickField.hidden) body.nickname = $('#nick').value;
     try {
-      const r = await api('POST', '/api/auth/verify', body);
-      if (r.status === 'needs_nickname') {
-        nickField.hidden = false;
-        $('#nick').focus();
-        $('#loginGo').textContent = '가입하고 1,000알 받기';
-        return;
-      }
-      state.me = r.me;
-      d.close();
-      toast(r.status === 'registered' ? '가입 완료! 1,000알을 받았습니다' : `${r.me.nickname}님, 반가워요`);
-      renderAccount();
-      route();
+      loggedIn(await submit($('#nick').value));
     } catch (err) {
       toast(err.message, true);
     }
   };
+}
+
+async function openLogin() {
+  const cfg = await getConfig();
+  const d = $('#login');
+  d.innerHTML = `
+    <form method="dialog">
+      <h2>시작하기</h2>
+      <p>가입하면 1,000알을 무료로 드립니다. 알은 구매·현금화·선물이 불가능한 무료 포인트이며, 올공나라 알알과는 별개입니다.</p>
+      ${cfg.olgong ? `<div class="login-btns">
+        <a class="btn login-kakao" href="${esc(cfg.olgong.kakao)}">카카오로 올공나라 로그인</a>
+        <a class="btn login-google" href="${esc(cfg.olgong.google)}">구글로 올공나라 로그인</a></div>` : ''}
+      ${cfg.devLogin ? `<p class="dev-note">개발용 로그인 (운영에서는 꺼짐)</p>
+        <div class="field"><label for="phone">휴대폰 번호</label><input class="in" id="phone" inputmode="numeric" placeholder="010-0000-0000"></div>
+        <button class="btn primary" id="loginGo">개발용으로 들어가기</button>` : ''}
+      ${!cfg.olgong && !cfg.devLogin ? '<p>지금은 로그인을 사용할 수 없습니다.</p>' : ''}
+      <div class="actions"><button class="btn" value="cancel" formnovalidate>닫기</button></div>
+    </form>`;
+  d.showModal();
+  const go = $('#loginGo');
+  if (go) go.onclick = async (e) => {
+    e.preventDefault();
+    const phone = $('#phone').value;
+    try {
+      const r = await api('POST', '/api/auth/verify', { phone });
+      if (r.status === 'needs_nickname') return askNickname((nickname) => api('POST', '/api/auth/verify', { phone, nickname }));
+      loggedIn(r);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
+}
+
+/** 올공나라 로그인에서 돌아왔을 때: 주소의 #access_token 을 서버에 확인받고 주소에서 지운다. */
+async function finishOlgongLogin() {
+  if (location.pathname !== '/auth/olgong') return;
+  const params = new URLSearchParams(location.hash.slice(1));
+  const token = params.get('access_token');
+  history.replaceState(null, '', '/');
+  if (!token) {
+    if (params.get('error_description')) toast(params.get('error_description'), true);
+    return;
+  }
+  try {
+    const r = await api('POST', '/api/auth/olgong', { access_token: token });
+    if (r.status === 'needs_nickname') return askNickname((nickname) => api('POST', '/api/auth/olgong', { access_token: token, nickname }));
+    loggedIn(r);
+  } catch (err) {
+    toast(err.message, true);
+  }
 }
 
 async function refreshMe() {
@@ -132,7 +180,7 @@ function cardHtml(e) {
     const m = e.markets[0];
     const c = chance(m);
     return `<a class="card" href="#/event/${encodeURIComponent(e.id)}">${head}<h3>${esc(e.title)}</h3>
-      <div class="row-mkt"><div class="prob num">${c == null ? '—' : `${c}%`}<small>예 확률</small></div>
+      <div class="row-mkt"><div class="prob num">${c == null ? '—' : `${c}%`}<small>${m.volume === 0 && c != null ? '참고 확률' : '예 확률'}</small></div>
       <div class="pair"><span class="btn-yes num">예 ${m.yesAsk ?? '—'}</span><span class="btn-no num">아니오 ${m.noAsk ?? '—'}</span></div></div>
       <div class="meta"><span class="num">거래량 ${fmt(m.volume)}계약</span></div></a>`;
   }
@@ -228,7 +276,7 @@ function renderOrder(e, m) {
       <div class="stepper"><button data-d="qty" data-v="-1" aria-label="수량 줄이기">−</button><input id="qty" class="num" inputmode="numeric" value="${state.qty}"><button data-d="qty" data-v="1" aria-label="수량 늘리기">+</button></div></div>
     <div class="sum" id="sum"></div>
     <div class="shield-note"><span class="shield-ico"></span><span>틀려도 이벤트가 끝나면 넣은 알을 모두 돌려받습니다. 맞히면 이익의 10%는 소멸됩니다.</span></div>
-    <button class="btn primary" id="submit">${state.me ? `${s === 'yes' ? '예' : '아니오'} 주문하기` : '본인인증 후 주문'}</button>
+    <button class="btn primary" id="submit">${state.me ? `${s === 'yes' ? '예' : '아니오'} 주문하기` : '로그인 후 주문'}</button>
     ${state.me ? `<p class="meta num">거래 한도 ${fmt(state.me.exposureUsed)} / ${fmt(state.me.exposureCap)}알 · 이벤트당 ${fmt(state.me.eventExposureCap)}알</p>` : ''}`;
   const clamp = () => {
     state.price = Math.min(99, Math.max(1, parseInt($('#price').value, 10) || 1));
@@ -277,7 +325,7 @@ function renderOrder(e, m) {
 // ---------- 내 자산 ----------
 async function pagePortfolio() {
   if (!state.me) {
-    view.innerHTML = `<div class="panel"><h2>내 자산</h2><p class="meta">본인인증 후 볼 수 있습니다.</p><button class="btn primary" id="lg">본인인증으로 시작</button></div>`;
+    view.innerHTML = `<div class="panel"><h2>내 자산</h2><p class="meta">로그인 후 볼 수 있습니다.</p><button class="btn primary" id="lg">시작하기</button></div>`;
     $('#lg').onclick = openLogin;
     return;
   }
@@ -368,6 +416,11 @@ async function pageAdmin() {
       <div>총 공급<b>${fmt(supply.total)}</b></div><div>누적 발행<b>${fmt(supply.minted)}</b></div><div>손실 보전 발행<b>${fmt(supply.refundsMinted)}</b></div>
       <div>수수료 소멸<b>${fmt(supply.feesBurned)}</b></div><div>사용자<b>${fmt(supply.users)}</b></div></div>
       <p><button class="btn sm" id="season">새 시즌 시작 (랭킹 점수만 초기화)</button></p></div>
+    <div class="panel"><h2>NOSTRA 문제 가져오기</h2>
+      <p class="meta">NOSTRA의 <code>/api/v1/markets?limit=100</code> 응답(JSON)을 붙여넣거나 파일로 올리세요. 거래 중인 문제만 가져오고, 이미 가져온 문제는 건너뜁니다. NOSTRA의 현재 확률은 첫 거래 전 참고 가격이 됩니다.</p>
+      <textarea class="in" id="nostraJson" rows="4" placeholder='{"items":[...]}'></textarea>
+      <p><input type="file" id="nostraFile" accept="application/json,.json"> <button class="btn primary sm" id="nostraGo">가져오기</button></p>
+      <div id="nostraResult" class="meta"></div></div>
     <div class="panel"><h2>새 이벤트</h2><form id="evForm" class="form-grid">
       <div class="field"><label for="f-id">이벤트 id (영문)</label><input class="in" id="f-id" required placeholder="kbo-2026-final"></div>
       <div class="field"><label for="f-cat">분류</label><input class="in" id="f-cat" placeholder="스포츠"></div>
@@ -388,6 +441,20 @@ async function pageAdmin() {
   const act = async (fn, ok, ask) => {
     if (ask && !confirm(ask)) return;
     try { await fn(); toast(ok); pageAdmin(); } catch (err) { toast(err.message, true); }
+  };
+  $('#nostraFile').onchange = async () => {
+    const f = $('#nostraFile').files[0];
+    if (f) $('#nostraJson').value = await f.text();
+  };
+  $('#nostraGo').onclick = async () => {
+    let payload;
+    try { payload = JSON.parse($('#nostraJson').value); } catch { return toast('JSON 형식이 아닙니다', true); }
+    try {
+      const r = await adminApi('POST', '/api/admin/import-nostra', { payload });
+      toast(`${r.created.length}개 가져옴, ${r.skipped.length}개 건너뜀`);
+      await pageAdmin();
+      $('#nostraResult').innerHTML = r.skipped.length ? `건너뜀: ${r.skipped.map((x) => `${esc(x.slug)} (${esc(x.reason)})`).join(', ')}` : '';
+    } catch (err) { toast(err.message, true); }
   };
   $('#season').onclick = () => act(() => adminApi('POST', '/api/admin/season'), '새 시즌을 시작했습니다', '랭킹 점수를 모두 0으로 초기화합니다. 계속할까요?');
   $('#evForm').onsubmit = (ev) => {
@@ -433,4 +500,4 @@ async function route() {
 }
 
 window.addEventListener('hashchange', () => { scrollTo(0, 0); route(); });
-refreshMe().catch(() => renderAccount()).finally(route);
+finishOlgongLogin().finally(() => refreshMe().catch(() => renderAccount()).finally(route));

@@ -1,23 +1,26 @@
 // 데모 데이터: node scripts/seed.ts [DB_PATH]  (기존 DB가 비어 있을 때만)
 import { Platform } from '../src/platform.ts';
-import { SqliteStore } from '../src/journal.ts';
+import { openStore } from '../src/journal.ts';
 import { hashCi } from '../src/identity.ts';
 
+// 로컬 개발 전용. 운영 DB에는 쓰지 않는다 (NOSTRA 문제는 운영 화면의 가져오기를 쓴다).
+if (process.env.NODE_ENV === 'production') throw new Error('운영 환경에서는 데모 데이터를 넣지 않습니다');
 const path = process.argv[2] ?? process.env.DB_PATH ?? 'data/alal.db';
-const store = new SqliteStore(path);
-if (store.all().length > 0) {
-  console.log('이미 데이터가 있어 건너뜁니다:', path);
+const store = await openStore({ ...process.env, DB_PATH: path });
+if ((await store.all()).length > 0) {
+  console.log('이미 데이터가 있어 건너뜁니다');
   process.exit(0);
 }
-const p = new Platform(store);
+const p = await Platform.open(store);
 const day = 86400000;
 const now = Date.now();
-const users = ['예측왕', '신중한곰', '데이터덕후', '야구광', '날씨요정', '경제통'].map((nick, i) => {
+const users: string[] = [];
+for (const [i, nick] of ['예측왕', '신중한곰', '데이터덕후', '야구광', '날씨요정', '경제통'].entries()) {
   const userId = p.newUserId();
   // 개발용 인증과 같은 방식: 휴대폰 010-0000-000i
-  p.exec({ t: 'register', userId, identityId: hashCi(`dev-phone:0100000000${i}`, process.env.IDENTITY_SECRET ?? 'dev-only-secret'), nickname: nick });
-  return userId;
-});
+  await p.exec({ t: 'register', userId, identityId: hashCi(`dev-phone:0100000000${i}`, process.env.IDENTITY_SECRET ?? 'dev-only-secret'), nickname: nick });
+  users.push(userId);
+}
 const ev = (id: string, title: string, category: string, rules: string, days: number, markets: string[], exhaustive = true) =>
   p.exec({ t: 'createEvent', id, title, category, rules, closesAt: new Date(now + days * day).toISOString(), exhaustive: markets.length > 1 && exhaustive,
     markets: markets.map((m, i) => ({ id: `${id}-${i + 1}`, title: m })) });
@@ -38,6 +41,6 @@ o(4, 'snow-first-1', 'yes', 33, 5); o(3, 'snow-first-1', 'no', 67, 5);
 // 이미 끝난 이벤트 하나: 정산 내역과 랭킹을 보여주기 위해
 ev('demo-done', '지난주 프로야구 개막전, 홈팀이 이겼을까?', '스포츠', 'KBO 공식 기록 기준.', 1, ['홈팀 승리']);
 o(0, 'demo-done-1', 'yes', 52, 4); o(1, 'demo-done-1', 'no', 48, 4); o(2, 'demo-done-1', 'yes', 50, 2); o(3, 'demo-done-1', 'no', 50, 2);
-p.exec({ t: 'settle', eventId: 'demo-done', winner: 'demo-done-1' });
-console.log('데모 데이터 생성 완료:', path, p.supply());
-store.close();
+await p.exec({ t: 'settle', eventId: 'demo-done', winner: 'demo-done-1' });
+console.log('데모 데이터 생성 완료:', p.supply());
+await store.close();

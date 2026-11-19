@@ -480,6 +480,14 @@ export class Engine {
     ev.status = 'void';
   }
 
+  /** 첫 체결 전 참고 가격(예: 가져온 문제의 기존 확률). 표시와 가격 밴드 기준으로만 쓰인다. */
+  setReferencePrice(marketId: string, yesPrice: number) {
+    const m = this.markets.get(marketId);
+    if (!m) throw new EngineError('마켓 없음');
+    if (!Number.isInteger(yesPrice) || yesPrice < 1 || yesPrice > 99) throw new EngineError('참고 가격은 1~99 정수');
+    if (m.lastYesPrice === undefined) m.lastYesPrice = yesPrice;
+  }
+
   /** 거래 마감: 결과 발표 전 주문을 막고 대기 주문을 취소한다. */
   closeEvent(eventId: string) {
     const ev = this.events.get(eventId);

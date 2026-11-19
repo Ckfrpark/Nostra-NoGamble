@@ -16,7 +16,8 @@ export type Command =
       rules: string;
       closesAt: string; // ISO
       exhaustive: boolean;
-      markets: { id: string; title: string }[];
+      markets: { id: string; title: string; refPrice?: number }[];
+      source?: string; // 가져온 곳 (예: nostra:<slug>)
     }
   | { t: 'order'; userId: string; marketId: string; side: Side; price: number; qty: number }
   | { t: 'cancel'; userId: string; orderId: number }
@@ -51,22 +52,40 @@ export class Platform {
   meta = new Map<string, EventMeta>();
   volume = new Map<string, number>(); // marketId -> 체결 계약 수
   history = new Map<string, HistoryLine[]>(); // userId -> 정산 내역
+  sources = new Map<string, string>(); // 가져온 곳 -> eventId (중복 가져오기 방지)
   private replaying = false;
+  private tail: Promise<void> = Promise.resolve();
+  onJournalFailure: (err: unknown) => void = (err) => {
+    // 메모리 상태가 저널보다 앞서 버렸으므로 계속 돌면 안 된다. 재시작하면 저널에서 복원된다.
+    console.error('저널 기록 실패, 종료합니다', err);
+    process.exit(1);
+  };
 
-  constructor(journal: Journal, cfg: Partial<Config> = {}) {
+  private constructor(journal: Journal, cfg: Partial<Config>) {
     this.engine = new Engine(cfg);
     this.journal = journal;
-    this.replaying = true;
-    for (const { cmd, ts } of journal.all()) this.apply(cmd as Command, ts);
-    this.replaying = false;
-    this.engine.checkInvariant();
   }
 
-  /** 명령 실행. 성공하면 저널에 기록하고 결과를 돌려준다. EngineError는 그대로 던진다. */
-  exec(cmd: Command, now = new Date()): unknown {
+  /** 저널을 처음부터 재생해 상태를 복원한 플랫폼을 만든다. */
+  static async open(journal: Journal, cfg: Partial<Config> = {}): Promise<Platform> {
+    const p = new Platform(journal, cfg);
+    p.replaying = true;
+    for (const { cmd, ts } of await journal.all()) p.apply(cmd as Command, ts);
+    p.replaying = false;
+    p.engine.checkInvariant();
+    return p;
+  }
+
+  /**
+   * 명령 실행. 엔진에 즉시 반영하고(동기), 저널 기록을 순서대로 이어 붙인 뒤 기록이 끝나면 결과를 돌려준다.
+   * 엔진 반영이 동기라 명령 순서 = 저널 순서가 보장된다. EngineError는 기록 없이 그대로 던진다.
+   */
+  async exec(cmd: Command, now = new Date()): Promise<any> {
     const ts = now.toISOString();
     const result = this.apply(cmd, ts);
-    this.journal.append(cmd, ts);
+    const write = this.tail.then(() => this.journal.append(cmd, ts));
+    this.tail = write.catch((err) => this.onJournalFailure(err));
+    await write;
     return result;
   }
 
@@ -91,8 +110,11 @@ export class Platform {
           for (const m of cmd.markets) if (this.engine.markets.has(m.id)) throw new EngineError(`이미 있는 마켓 id: ${m.id}`);
           if (Number.isNaN(Date.parse(cmd.closesAt))) throw new EngineError('마감 시각 형식 오류');
         }
+        if (!this.replaying && cmd.source && this.sources.has(cmd.source)) throw new EngineError('이미 가져온 문제');
         e.createEvent(cmd.id, cmd.title, cmd.markets, cmd.exhaustive);
+        for (const m of cmd.markets) if (m.refPrice !== undefined) e.setReferencePrice(m.id, m.refPrice);
         this.meta.set(cmd.id, { category: cmd.category, rules: cmd.rules, closesAt: cmd.closesAt, createdAt: ts });
+        if (cmd.source) this.sources.set(cmd.source, cmd.id);
         return { eventId: cmd.id };
       }
       case 'order': {
@@ -138,10 +160,10 @@ export class Platform {
   }
 
   /** 마감 시각이 지난 열린 이벤트를 마감한다. */
-  closeDueEvents(now = new Date()) {
+  async closeDueEvents(now = new Date()) {
     for (const [id, m] of this.meta) {
       const ev = this.engine.events.get(id)!;
-      if (ev.status === 'open' && Date.parse(m.closesAt) <= now.getTime()) this.exec({ t: 'close', eventId: id }, now);
+      if (ev.status === 'open' && Date.parse(m.closesAt) <= now.getTime()) await this.exec({ t: 'close', eventId: id }, now);
     }
   }
 

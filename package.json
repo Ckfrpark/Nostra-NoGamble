@@ -11,5 +11,10 @@
     "sim": "node sim/simulate.ts",
     "seed": "node --no-warnings scripts/seed.ts"
   },
-  "engines": { "node": ">=22.18" }
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
+  }
 }

@@ -42,7 +42,8 @@ export interface User {
   id: string;
   identityId: string; // 본인인증 CI 해시. 같은 사람의 계정은 같은 값 → 1인 1계정, 자기거래 차단
   balance: number;
-  skillScore: number; // 보호·수수료 적용 전 누적 원손익 (제로섬)
+  skillScore: number; // 보호·수수료 적용 전 누적 원손익 (제로섬). 보호 한도 계산에 사용, 초기화하지 않음
+  seasonScore: number; // 이번 시즌 원손익. 랭킹에 사용, 시즌마다 0으로 초기화 (알 잔액은 그대로)
   lastAllowanceDay: number;
 }
 
@@ -142,7 +143,7 @@ export class Engine {
   registerUser(id: string, identityId: string): User {
     if (this.users.has(id)) throw new EngineError('이미 존재하는 계정');
     if (this.identities.has(identityId)) throw new EngineError('본인인증 1인 1계정 위반');
-    const u: User = { id, identityId, balance: 0, skillScore: 0, lastAllowanceDay: -1 };
+    const u: User = { id, identityId, balance: 0, skillScore: 0, seasonScore: 0, lastAllowanceDay: -1 };
     this.users.set(id, u);
     this.identities.set(identityId, id);
     this.mint(u, this.cfg.signupGrant);
@@ -442,6 +443,7 @@ export class Engine {
       const acc = this.account(uid, ev.id);
       const rawPnl = acc.cashIn - acc.cashOut;
       u.skillScore += rawPnl;
+      u.seasonScore += rawPnl;
       let refund = 0;
       let fee = 0;
       if (rawPnl < 0) {
@@ -476,6 +478,25 @@ export class Engine {
       for (const [k, p] of this.positions) if (k.endsWith(`|${mid}`)) p.yes = p.no = p.lockedYes = p.lockedNo = 0;
     if (ev.escrow !== 0) throw new Error(`에스크로 불일치: ${ev.escrow}`);
     ev.status = 'void';
+  }
+
+  // ---------- 시즌·랭킹 ----------
+  season = 1;
+
+  /** 이번 시즌 랭킹: 보호 전 원손익(seasonScore) 내림차순. 보상은 배지·칭호만 (경품 없음). */
+  leaderboard(limit = 100): { rank: number; userId: string; score: number }[] {
+    return [...this.users.values()]
+      .sort((a, b) => b.seasonScore - a.seasonScore || a.id.localeCompare(b.id))
+      .slice(0, limit)
+      .map((u, i) => ({ rank: i + 1, userId: u.id, score: u.seasonScore }));
+  }
+
+  /** 새 시즌 시작: 랭킹 점수만 초기화한다. 알 잔액·보호 한도(누적 실력)는 바뀌지 않는다. */
+  startNewSeason(): { season: number; finalStandings: { rank: number; userId: string; score: number }[] } {
+    const finalStandings = this.leaderboard();
+    for (const u of this.users.values()) u.seasonScore = 0;
+    const ended = this.season++;
+    return { season: ended, finalStandings };
   }
 
   // ---------- 감사 ----------

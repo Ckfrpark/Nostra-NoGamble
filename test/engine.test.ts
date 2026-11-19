@@ -157,3 +157,20 @@ test('출석 지급은 하루 한 번, 잔액 상한 이상이면 지급하지 �
   e.user('a').balance = 5000;
   assert.equal(e.claimDailyAllowance('a', 2), 0);
 });
+
+test('새 시즌은 랭킹 점수만 초기화하고 알 잔액과 보호 한도는 유지한다', () => {
+  const e = setup();
+  e.placeOrder('b', 'M1', 'no', 40, 10);
+  e.placeOrder('a', 'M1', 'yes', 60, 10);
+  e.settleEvent('E1', 'M1');
+  assert.equal(e.leaderboard()[0].userId, 'a');
+  const balance = e.user('a').balance;
+  const cap = e.exposureCap(e.user('a'));
+  const { season, finalStandings } = e.startNewSeason();
+  assert.equal(season, 1);
+  assert.equal(finalStandings[0].score, 400);
+  assert.equal(e.user('a').seasonScore, 0);
+  assert.equal(e.user('a').balance, balance);
+  assert.equal(e.exposureCap(e.user('a')), cap);
+  e.checkInvariant();
+});

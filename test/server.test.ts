@@ -4,17 +4,17 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { createApp } from '../src/server.ts';
+import { createApp, type AppOptions } from '../src/server.ts';
 import { Platform } from '../src/platform.ts';
 import { SqliteStore } from '../src/journal.ts';
 import { DevIdentityProvider } from '../src/identity.ts';
 
 const ADMIN = 'test-admin';
 
-async function boot(dbPath: string, now = () => new Date('2026-11-20T03:00:00Z')) {
+async function boot(dbPath: string, now = () => new Date('2026-11-20T03:00:00Z'), extra: Partial<AppOptions> = {}) {
   const store = new SqliteStore(dbPath);
-  const platform = new Platform(store);
-  const app = createApp({ platform, sessions: store, identity: new DevIdentityProvider('s'), adminToken: ADMIN, now });
+  const platform = await Platform.open(store);
+  const app = createApp({ platform, sessions: store, devIdentity: new DevIdentityProvider('s'), adminToken: ADMIN, now, ...extra });
   await new Promise<void>((r) => app.listen(0, r));
   const base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
   const stop = () => new Promise<void>((r) => { app.close(() => { store.close(); r(); }); app.closeAllConnections(); });

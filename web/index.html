@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nostra · 알로 하는 예측</title>
+  <link rel="icon" href="/egg.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <a class="logo" href="#/"><span class="egg" aria-hidden="true"></span>Nostra</a>
+      <nav class="nav">
+        <a href="#/" data-nav="markets">마켓</a>
+        <a href="#/portfolio" data-nav="portfolio">내 자산</a>
+        <a href="#/leaderboard" data-nav="leaderboard">랭킹</a>
+      </nav>
+      <div class="account" id="account"></div>
+    </div>
+  </header>
+  <main id="view" class="view"></main>
+  <footer class="foot">
+    알은 무료로만 지급되며 구매·현금화·환전·선물이 불가능합니다. 거래 손실은 이벤트가 끝날 때 전액 보전됩니다.
+    · <a href="#/admin">운영</a>
+  </footer>
+  <dialog id="login" class="modal"></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

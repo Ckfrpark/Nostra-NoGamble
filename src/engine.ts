@@ -68,7 +68,7 @@ export interface Market {
   lastYesPrice?: number;
 }
 
-export type EventStatus = 'open' | 'settled' | 'void';
+export type EventStatus = 'open' | 'closed' | 'settled' | 'void';
 
 export interface MarketEvent {
   id: string;
@@ -244,7 +244,7 @@ export class Engine {
     let total = 0;
     const extraEvent = extra ? this.markets.get(extra.marketId)!.eventId : undefined;
     for (const ev of this.events.values()) {
-      if (ev.status !== 'open') continue;
+      if (ev.status !== 'open' && ev.status !== 'closed') continue;
       total += this.worstCaseLoss(userId, ev.id, ev.id === extraEvent ? extra : undefined);
     }
     return total;
@@ -417,7 +417,7 @@ export class Engine {
   /** winningMarketId: 정답 마켓, null이면 "해당 없음" (exhaustive=false 이벤트만) */
   settleEvent(eventId: string, winningMarketId: string | null): SettlementLine[] {
     const ev = this.events.get(eventId);
-    if (!ev || ev.status !== 'open') throw new EngineError('정산할 수 없는 이벤트');
+    if (!ev || (ev.status !== 'open' && ev.status !== 'closed')) throw new EngineError('정산할 수 없는 이벤트');
     if (winningMarketId === null && ev.exhaustive) throw new EngineError('exhaustive 이벤트는 정답 필요');
     if (winningMarketId !== null && !ev.marketIds.includes(winningMarketId)) throw new EngineError('이벤트에 없는 마켓');
     this.closeBooks(ev);
@@ -465,7 +465,7 @@ export class Engine {
   /** 이벤트 무효(취소): 모든 사용자에게 순지불액을 돌려준다. 손익 0. */
   voidEvent(eventId: string) {
     const ev = this.events.get(eventId);
-    if (!ev || ev.status !== 'open') throw new EngineError('무효 처리할 수 없는 이벤트');
+    if (!ev || (ev.status !== 'open' && ev.status !== 'closed')) throw new EngineError('무효 처리할 수 없는 이벤트');
     this.closeBooks(ev);
     for (const uid of this.eventUsers(ev)) {
       const acc = this.account(uid, ev.id);
@@ -478,6 +478,56 @@ export class Engine {
       for (const [k, p] of this.positions) if (k.endsWith(`|${mid}`)) p.yes = p.no = p.lockedYes = p.lockedNo = 0;
     if (ev.escrow !== 0) throw new Error(`에스크로 불일치: ${ev.escrow}`);
     ev.status = 'void';
+  }
+
+  /** 거래 마감: 결과 발표 전 주문을 막고 대기 주문을 취소한다. */
+  closeEvent(eventId: string) {
+    const ev = this.events.get(eventId);
+    if (!ev || ev.status !== 'open') throw new EngineError('마감할 수 없는 이벤트');
+    this.closeBooks(ev);
+    ev.status = 'closed';
+  }
+
+  // ---------- 조회 (화면용) ----------
+  /** 가격대별 잔량. yesBids: 예 매수 호가, noBids: 아니오 매수 호가 (높은 가격부터) */
+  bookLevels(marketId: string): { yesBids: { price: number; qty: number }[]; noBids: { price: number; qty: number }[] } {
+    const m = this.markets.get(marketId);
+    if (!m) throw new EngineError('마켓 없음');
+    const agg = (orders: Order[]) => {
+      const mp = new Map<number, number>();
+      for (const o of orders) mp.set(o.price, (mp.get(o.price) ?? 0) + o.qty);
+      return [...mp].sort((a, b) => b[0] - a[0]).map(([price, qty]) => ({ price, qty }));
+    };
+    return { yesBids: agg(m.yesBids), noBids: agg(m.noBids) };
+  }
+
+  /**
+   * 보호 원금: 열린 이벤트에 들어가 있는 순지불액. 손실 보호 때문에 결과와 상관없이
+   * 정산 후 최소 이만큼은 돌려받는다. 잔액 + 보호 원금 = 보장된 최소 자산.
+   */
+  protectedPrincipal(userId: string): { eventId: string; amount: number }[] {
+    const out = [];
+    for (const ev of this.events.values()) {
+      if (ev.status !== 'open' && ev.status !== 'closed') continue;
+      const acc = this.accounts.get(`${userId}|${ev.id}`);
+      if (!acc) continue;
+      const amount = acc.cashOut - acc.cashIn;
+      if (amount > 0) out.push({ eventId: ev.id, amount });
+    }
+    return out;
+  }
+
+  userOrders(userId: string): Order[] {
+    return [...this.orders.values()].filter((o) => o.userId === userId);
+  }
+
+  userPositions(userId: string): { marketId: string; yes: number; no: number }[] {
+    const out = [];
+    for (const [k, p] of this.positions) {
+      const [uid, mid] = k.split('|');
+      if (uid === userId && (p.yes > 0 || p.no > 0)) out.push({ marketId: mid, yes: p.yes, no: p.no });
+    }
+    return out;
   }
 
   // ---------- 시즌·랭킹 ----------
